@@ -31,6 +31,9 @@ export class Drone {
     this.markerSentTo = new Set(); // track which drones received our marker
     this.snapshotsInitiated = 0;
     this.snapshotsMerged = 0;
+
+    // Delivery awareness — propagated via snapshot merges
+    this.deliveredIds = new Set();
   }
 
   getRandomTarget() {
@@ -99,6 +102,12 @@ export class Drone {
     this.reliability = this.successful_deliveries / this.total_interactions;
   }
 
+  markDelivered(packetId) {
+    this.deliveredIds.add(packetId);
+    // Also remove from local buffer since it's confirmed delivered
+    this.packets = this.packets.filter(p => p.id !== packetId);
+  }
+
 
   // ═══════════════════════════════════════════════════════════════════════
   // AeroSnap: Vector Clock Operations
@@ -126,6 +135,7 @@ export class Drone {
     this.snapshot = {
       vectorClock: { ...this.vectorClock },
       dataIds: new Set(this.packets.map(p => p.id)),
+      deliveredIds: new Set(this.deliveredIds),
       knownNodes: new Set([this.id]),
       time: time,
       mergedCount: 0,
@@ -154,6 +164,7 @@ export class Drone {
       this.snapshot = {
         vectorClock: { ...this.vectorClock },
         dataIds: new Set(this.packets.map(p => p.id)),
+        deliveredIds: new Set(this.deliveredIds),
         knownNodes: new Set([this.id]),
         time: incomingSnapshot.time,
         mergedCount: 0,
@@ -170,6 +181,14 @@ export class Drone {
     // Union of data IDs
     if (incomingSnapshot.dataIds) {
       incomingSnapshot.dataIds.forEach(id => this.snapshot.dataIds.add(id));
+    }
+
+    // Union of delivered IDs and propagate to local awareness
+    if (incomingSnapshot.deliveredIds) {
+      incomingSnapshot.deliveredIds.forEach(id => {
+        this.snapshot.deliveredIds.add(id);
+        this.deliveredIds.add(id);  // propagate to live awareness
+      });
     }
 
     // Union of known nodes

@@ -21,9 +21,13 @@ export class SimulationEngine {
     this.snapshotRipples  = [];
     this.totalMarkersSent = 0;
     this.snapshotCount    = 0;
+    this.prunedPackets    = 0;  // packets pruned via snapshot delivery awareness
 
     // ── EMRT state ────────────────────────────────────────────────
     this.emrtLValues = [];   // record every dynamic-L used (for histogram)
+
+    // ── General packet lifecycle ──────────────────────────────────
+    this.ttlExpired = 0;     // packets that expired before delivery
 
     // ── Spray-and-Wait / EMRT: L=8 initial copy budget ────────────
     this.SPRAY_L = 8;
@@ -56,6 +60,9 @@ export class SimulationEngine {
         this.prophPred[d.id][o.id]    = 0;
         this.prophLastEnc[d.id][o.id] = 0;
       });
+      // BASE is the delivery destination — PRoPHET routes toward it
+      this.prophPred[d.id]['BASE']    = 0;
+      this.prophLastEnc[d.id]['BASE'] = 0;
     });
 
     this.totalPacketsGenerated = 0;
@@ -76,10 +83,11 @@ export class SimulationEngine {
   // ═══════════════════════════════════════════════════════════════════════
 
   _copyPacket(p) {
-    const c = new DataPacket(p.id, p.priority);
+    const c = new DataPacket(p.id, p.priority, p.ttl);
     c.timestamp = p.timestamp;
     c.hops      = p.hops;
     c.delivered = p.delivered;
+    c.sourceId  = p.sourceId;
     return c;
   }
 
@@ -97,6 +105,8 @@ export class SimulationEngine {
       if (!aIds.has(p.id) && a.packets.length < 20) {
         const copy = this._copyPacket(p); copy.hops++;
         a.packets.push(copy);
+        a.battery = Math.max(0, a.battery - 0.001);
+        b.battery = Math.max(0, b.battery - 0.001);
         this.totalTransmissions++; changed = true;
       }
     });
@@ -104,6 +114,8 @@ export class SimulationEngine {
       if (!bIds.has(p.id) && b.packets.length < 20) {
         const copy = this._copyPacket(p); copy.hops++;
         b.packets.push(copy);
+        a.battery = Math.max(0, a.battery - 0.001);
+        b.battery = Math.max(0, b.battery - 0.001);
         this.totalTransmissions++; changed = true;
       }
     });
@@ -125,6 +137,8 @@ export class SimulationEngine {
         const copy = this._copyPacket(p); copy.hops++;
         dst.packets.push(copy);
         this.sprayCopies[dst.id][p.id] = give;
+        src.battery = Math.max(0, src.battery - 0.001);
+        dst.battery = Math.max(0, dst.battery - 0.001);
         this.totalTransmissions++; changed = true;
       });
     };
@@ -133,25 +147,30 @@ export class SimulationEngine {
     return changed;
   }
 
-  /* 3. PRoPHET — forward if neighbour has higher predictability */
+  /* 3. PRoPHET — forward to drone with higher P(reaching BASE) */
   prophetExchange(a, b) {
     let changed = false;
     const aliveDroneIds = this.drones.filter(d => d.alive).map(d => d.id);
+    const allDestIds = [...aliveDroneIds, 'BASE'];
 
-    // Age predictions
+    // Age all predictions including BASE
     [a, b].forEach(d => {
-      aliveDroneIds.forEach(nid => {
+      allDestIds.forEach(nid => {
         const elapsed = this.time - (this.prophLastEnc[d.id][nid] ?? 0);
         this.prophPred[d.id][nid] = (this.prophPred[d.id][nid] ?? 0) * Math.pow(this.GAMMA, elapsed);
       });
     });
 
-    // Encounter update
+    // Encounter update between a and b
     const updateEnc = (me, other) => {
       const old = this.prophPred[me.id][other.id] ?? 0;
       this.prophPred[me.id][other.id] = old + (1 - old) * this.P_INIT;
       this.prophLastEnc[me.id][other.id] = this.time;
-      // Transitivity
+      // Transitivity toward BASE through the other drone
+      const viaBase = (this.prophPred[me.id][other.id] ?? 0) * (this.prophPred[other.id]['BASE'] ?? 0) * this.BETA;
+      if (viaBase > (this.prophPred[me.id]['BASE'] ?? 0))
+        this.prophPred[me.id]['BASE'] = viaBase;
+      // Transitivity toward other drones
       aliveDroneIds.forEach(nid => {
         if (nid === me.id) return;
         const via = (this.prophPred[me.id][other.id] ?? 0) * (this.prophPred[other.id][nid] ?? 0) * this.BETA;
@@ -161,16 +180,18 @@ export class SimulationEngine {
     };
     updateEnc(a, b); updateEnc(b, a);
 
-    // Forward messages
+    // Forward: give packet to drone with higher P(BASE)
     const forward = (src, relay) => {
       const relayIds = new Set(relay.packets.map(p => p.id));
       src.packets.forEach(p => {
         if (relayIds.has(p.id) || relay.packets.length >= 20) return;
-        const srcP   = this.prophPred[src.id][p.sourceId ?? p.id.split('-')[0]] ?? 0;
-        const relayP = this.prophPred[relay.id][p.sourceId ?? p.id.split('-')[0]] ?? 0;
+        const srcP   = this.prophPred[src.id]['BASE']   ?? 0;
+        const relayP = this.prophPred[relay.id]['BASE'] ?? 0;
         if (relayP > srcP) {
           const copy = this._copyPacket(p); copy.hops++;
           relay.packets.push(copy);
+          src.battery   = Math.max(0, src.battery   - 0.001);
+          relay.battery = Math.max(0, relay.battery - 0.001);
           this.totalTransmissions++; changed = true;
         }
       });
@@ -179,22 +200,24 @@ export class SimulationEngine {
     return changed;
   }
 
-  /* 4. EMRT — dynamic Spray-and-Wait, L based on 4 node-condition factors */
+  /* 4. EMRT — dynamic Spray-and-Wait, L based on 5 factors including TTL urgency */
   emrtExchange(a, b) {
     let changed = false;
     const tryEmrt = (src, dst) => {
-      const dynL = this._emrtDynamicL(src);
       const dstIds = new Set(dst.packets.map(p => p.id));
       src.packets.forEach(p => {
         if (dstIds.has(p.id) || dst.packets.length >= 20) return;
         const copies = this.sprayCopies[src.id][p.id] ?? 1;
         if (copies <= 1) return;
+        const dynL = this._emrtDynamicL(src, p);
         const give = Math.min(Math.floor(copies / 2), Math.max(1, Math.floor(dynL / 2)));
         const keep = copies - give;
         this.sprayCopies[src.id][p.id] = keep;
         const copy = this._copyPacket(p); copy.hops++;
         dst.packets.push(copy);
         this.sprayCopies[dst.id][p.id] = give;
+        src.battery = Math.max(0, src.battery - 0.001);
+        dst.battery = Math.max(0, dst.battery - 0.001);
         this.totalTransmissions++; changed = true;
         this.emrtLValues.push(dynL);
       });
@@ -203,7 +226,7 @@ export class SimulationEngine {
     return changed;
   }
 
-  _emrtDynamicL(drone) {
+  _emrtDynamicL(drone, packet) {
     let delta = 0;
     // Factor 1: connectivity
     const conn = this.drones.filter(d => d.alive && d.id !== drone.id && drone.distanceTo(d.x, d.z) < 15).length;
@@ -220,6 +243,12 @@ export class SimulationEngine {
     const encRate = (drone.totalEncounters ?? 0) / Math.max(this.time, 1);
     if      (encRate > 0.5) delta -= 1;
     else if (encRate < 0.1) delta += 1;
+    // Factor 5: TTL urgency — replicate more aggressively as TTL runs low
+    if (packet?.ttl != null) {
+      const ttlRatio = packet.ttl / 500;
+      if      (ttlRatio < 0.2) delta += 3;
+      else if (ttlRatio < 0.5) delta += 1;
+    }
     return Math.max(1, Math.min(10, 8 + delta));
   }
 
@@ -231,13 +260,19 @@ export class SimulationEngine {
     b.packets.forEach(p => {
       if (!aIds.has(p.id) && a.packets.length < 20 && Math.random() < 0.7) {
         const copy = this._copyPacket(p); copy.hops++;
-        a.packets.push(copy); this.totalTransmissions++; changed = true;
+        a.packets.push(copy);
+        a.battery = Math.max(0, a.battery - 0.001);
+        b.battery = Math.max(0, b.battery - 0.001);
+        this.totalTransmissions++; changed = true;
       }
     });
     a.packets.forEach(p => {
       if (!bIds.has(p.id) && b.packets.length < 20 && Math.random() < 0.7) {
         const copy = this._copyPacket(p); copy.hops++;
-        b.packets.push(copy); this.totalTransmissions++; changed = true;
+        b.packets.push(copy);
+        a.battery = Math.max(0, a.battery - 0.001);
+        b.battery = Math.max(0, b.battery - 0.001);
+        this.totalTransmissions++; changed = true;
       }
     });
     return changed;
@@ -264,14 +299,30 @@ export class SimulationEngine {
     }
     if (snapshotExchange) {
       this.snapshotRipples.push({ x: (a.x + b.x) / 2, y: Math.max(a.y, b.y), z: (a.z + b.z) / 2, type: 'merge', time: this.time, id: Math.random() });
+
+      // Prune packets both drones now know are already delivered
+      [a, b].forEach(drone => {
+        const knownDelivered = drone.deliveredIds;
+        if (!knownDelivered.size) return;
+        const before = drone.packets.length;
+        drone.packets = drone.packets.filter(p => !knownDelivered.has(p.id));
+        const pruned = before - drone.packets.length;
+        if (pruned > 0) {
+          this.prunedPackets += pruned;
+          this.logEvent(`${drone.id} pruned ${pruned} delivered packet(s) via snapshot`, 'snapshot');
+        }
+      });
     }
 
-    // Priority-gated replication with copy budget
+    // Priority-gated replication with snapshot-aware delivery checks
     const tryAero = (src, dst) => {
       const dstIds = new Set(dst.packets.map(p => p.id));
+      const knownDelivered = new Set([...src.deliveredIds, ...dst.deliveredIds]);
       src.packets.forEach(p => {
         if (dstIds.has(p.id) || dst.packets.length >= 20) return;
         if (p.priority < 0.4) return;
+        if (knownDelivered.has(p.id)) return;              // already delivered, skip
+        if (dst.snapshot?.dataIds?.has(p.id)) return;      // dst already has it per snapshot
         const copies = this.sprayCopies[src.id][p.id] ?? 1;
         if (copies <= 1) return;
         const give = Math.floor(copies / 2);
@@ -280,6 +331,8 @@ export class SimulationEngine {
         dst.packets.push(copy);
         this.sprayCopies[dst.id][p.id] = give;
         dst.tickClock();
+        src.battery = Math.max(0, src.battery - 0.001);
+        dst.battery = Math.max(0, dst.battery - 0.001);
         this.totalTransmissions++; hadExchange = true;
       });
     };
@@ -362,13 +415,35 @@ export class SimulationEngine {
 
     const alive = this.drones.filter(d => d.alive);
 
-    // 2. Base station deliveries — clear buffer after delivery
+    // 2a. TTL expiry — drop packets that ran out of time
+    alive.forEach(d => {
+      d.packets = d.packets.filter(p => {
+        if (p.ttl == null) return true;
+        p.ttl--;
+        if (p.ttl <= 0) { this.ttlExpired++; return false; }
+        return true;
+      });
+    });
+
+    // 2b. PRoPHET BASE encounter — drones near base gain P(BASE) experience
+    if (this.strategy === 'prophet') {
+      alive.forEach(d => {
+        if (d.distanceTo(this.base.x, this.base.z) < this.base.range) {
+          const old = this.prophPred[d.id]['BASE'] ?? 0;
+          this.prophPred[d.id]['BASE'] = old + (1 - old) * this.P_INIT;
+          this.prophLastEnc[d.id]['BASE'] = this.time;
+        }
+      });
+    }
+
+    // 2c. Base station deliveries — clear buffer after delivery
     alive.forEach(d => {
       if (d.distanceTo(this.base.x, this.base.z) >= this.base.range) return;
       const toDeliver = d.packets.filter(p => !p.delivered && !this.deliveredPackets.has(p.id));
       toDeliver.forEach(p => {
         p.delivered = true;
         this.deliveredPackets.add(p.id);
+        d.markDelivered(p.id);  // propagate delivery awareness via snapshots
         this.recoveredImages.push({ id: p.id, priority: p.priority, time: this.time });
         d.updateReliability(true);
         this.logEvent(`${d.id} DELIVERED ${p.id} TO BASE`, 'success');
@@ -459,6 +534,8 @@ export class SimulationEngine {
         time:           this.time,
         emrtAvgL,
         emrtSamples:    this.emrtLValues.length,
+        ttlExpired:     this.ttlExpired,
+        prunedPackets:  this.prunedPackets,
       },
     };
   }

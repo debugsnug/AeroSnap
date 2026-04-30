@@ -8,17 +8,16 @@ import * as THREE from 'three';
 function DataBeam({ start, end, color = '#FCD34D' }) {
   const ref = useRef();
   const phase = useRef(Math.random() * Math.PI * 2);
-  const mid = useMemo(() => ({
-    x: (start.x + end.x) / 2,
-    y: Math.max(start.y, end.y) + 6,
-    z: (start.z + end.z) / 2,
-  }), [start, end]);
   const curve = useMemo(() =>
     new THREE.QuadraticBezierCurve3(
       new THREE.Vector3(start.x, start.y, start.z),
-      new THREE.Vector3(mid.x, mid.y, mid.z),
+      new THREE.Vector3(
+        (start.x + end.x) / 2,
+        Math.max(start.y, end.y) + 6,
+        (start.z + end.z) / 2,
+      ),
       new THREE.Vector3(end.x, end.y, end.z)
-    ), [start, end, mid]);
+    ), [start.x, start.y, start.z, end.x, end.y, end.z]);
 
   useFrame(({ clock }) => {
     if (ref.current) {

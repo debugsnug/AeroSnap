@@ -399,6 +399,9 @@ export function DashboardUI() {
             </div>
             <div className="metric-footer">
               <span>Total transmissions: {m.transmissions}</span>
+              {m.ttlExpired > 0 && (
+                <span style={{ color: '#F43F5E' }}>{m.ttlExpired} TTL expired</span>
+              )}
             </div>
           </div>
 
@@ -434,6 +437,9 @@ export function DashboardUI() {
                 <div className="metric-footer">
                   <span>Markers sent: {m.markersSent || 0}</span>
                   <span>Snapshots: {m.snapshotCount || 0}</span>
+                  {m.prunedPackets > 0 && (
+                    <span style={{ color: '#8B5CF6' }}>{m.prunedPackets} pruned</span>
+                  )}
                 </div>
               </div>
             </>

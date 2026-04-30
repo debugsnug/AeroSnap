@@ -49,10 +49,10 @@ export function Quadcopter({ drone, isActive, hasSnapshot, accentColor = '#10B98
     }
 
     const t = clock.elapsedTime;
+    const phase = drone.id.charCodeAt(1) || 0;
 
     /* Smooth hover bob */
     if (groupRef.current) {
-      const phase = drone.id.charCodeAt(1) || 0;
       groupRef.current.position.y = drone.y + Math.sin(t * 1.6 + phase * 0.7) * 0.35;
     }
 
