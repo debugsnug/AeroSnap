@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(python generate_pdfs.py)",
+      "Bash(python main.py)"
+    ]
+  }
+}

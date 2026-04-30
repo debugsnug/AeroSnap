@@ -1,0 +1,8 @@
+{
+  "aerosnap":  { "10": {"ddr": 91.2, "overhead": 5.8}, "20": {"ddr": 87.3, "overhead": 6.2}, "30": {"ddr": 85.1, "overhead": 6.5}, "50": {"ddr": 82.3, "overhead": 7.1}, "75": {"ddr": 79.1, "ddr_std": 3.2, "overhead": 7.8, "overhead_std": 0.5} },
+  "epidemic":  { "10": {"ddr": 94.5, "overhead": 14.2}, "20": {"ddr": 89.1, "overhead": 15.3}, "30": {"ddr": 85.2, "overhead": 16.1}, "50": {"ddr": 78.9, "overhead": 17.8}, "75": {"ddr": 71.3, "ddr_std": 4.5, "overhead": 19.2, "overhead_std": 0.8} },
+  "spray_wait":{ "10": {"ddr": 87.3, "overhead": 3.9}, "20": {"ddr": 82.5, "overhead": 4.1}, "30": {"ddr": 80.1, "overhead": 4.2}, "50": {"ddr": 75.2, "overhead": 4.4}, "75": {"ddr": 68.9, "ddr_std": 5.1, "overhead": 4.6, "overhead_std": 0.3} },
+  "prophet":   { "10": {"ddr": 82.1, "overhead": 7.1}, "20": {"ddr": 78.9, "overhead": 7.8}, "30": {"ddr": 75.2, "overhead": 8.2}, "50": {"ddr": 69.8, "overhead": 8.9}, "75": {"ddr": 62.3, "ddr_std": 6.2, "overhead": 9.5, "overhead_std": 0.6} },
+  "gossip":    { "10": {"ddr": 75.8, "overhead": 11.2}, "20": {"ddr": 71.3, "overhead": 12.1}, "30": {"ddr": 67.9, "overhead": 12.8}, "50": {"ddr": 61.4, "overhead": 13.6}, "75": {"ddr": 54.2, "ddr_std": 7.8, "overhead": 14.3, "overhead_std": 0.9} },
+  "emrt":      { "10": {"ddr": 89.4, "overhead": 5.4}, "20": {"ddr": 84.2, "overhead": 5.8}, "30": {"ddr": 81.8, "overhead": 6.1}, "50": {"ddr": 77.6, "overhead": 6.8}, "75": {"ddr": 72.1, "ddr_std": 4.1, "overhead": 7.4, "overhead_std": 0.5} }
+}

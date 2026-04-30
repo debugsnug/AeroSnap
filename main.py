@@ -31,9 +31,9 @@ from visualization import (
 )
 
 
-def quick_run(steps: int = 600, num_drones: int = 10):
-    """Smoke-test: all algorithms, few drones, short duration."""
-    print("\n== Quick Run ==================================================")
+def quick_run(steps: int = 3600, num_drones: int = 20):
+    """Baseline evaluation: all algorithms, baseline parameters, single seed."""
+    print("\n== Baseline Run ===============================================")
     results = {}
     timelines = {}
     emrt_l_values = []
@@ -43,10 +43,10 @@ def quick_run(steps: int = 600, num_drones: int = 10):
             num_drones=num_drones,
             duration=steps,
             strategy=algo,
-            failure_rate=0.003 / 60,
-            packet_loss=0.08,
+            failure_rate=0.001 / 60,
+            packet_loss=0.05,
             comm_range=15.0,
-            seed=0,
+            seed=42,
         )
         m = sim.run()
         results[algo] = m
@@ -64,7 +64,7 @@ def quick_run(steps: int = 600, num_drones: int = 10):
 
     sim_snap = SimulationEngine(
         num_drones=num_drones, duration=steps, strategy="aerosnap",
-        failure_rate=0.003 / 60, packet_loss=0.08, comm_range=15.0, seed=0,
+        failure_rate=0.001 / 60, packet_loss=0.05, comm_range=15.0, seed=42,
     )
     sim_snap.run()
     plot_network_snapshot(sim_snap, "plots")
@@ -80,8 +80,8 @@ def timeline_comparison(steps: int = 3600, num_drones: int = 20):
             num_drones=num_drones,
             duration=steps,
             strategy=algo,
-            failure_rate=0.003 / 60,
-            packet_loss=0.08,
+            failure_rate=0.001 / 60,
+            packet_loss=0.05,
             comm_range=15.0,
             seed=42,
         )
@@ -148,7 +148,7 @@ def main():
     args = parser.parse_args()
 
     if args.quick:
-        quick_run(steps=min(args.steps, 600), num_drones=args.drones)
+        quick_run(steps=min(args.steps, 600), num_drones=min(args.drones, 5))
     elif args.full:
         full_run(num_runs=args.runs)
     elif args.timeline:
@@ -156,7 +156,7 @@ def main():
     elif args.strategy:
         single_strategy(args.strategy, args.steps, args.drones, args.export)
     else:
-        quick_run(steps=600, num_drones=10)
+        quick_run(steps=3600, num_drones=20)
 
 
 if __name__ == "__main__":

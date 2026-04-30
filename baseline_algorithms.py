@@ -79,7 +79,7 @@ class EpidemicAlgorithm:
 
 class SprayWaitAlgorithm:
     """
-    Spray L=8 copies of each message, then wait for direct delivery.
+    Spray L=3 copies of each message, then wait for direct delivery.
 
     When a node holding C > 1 copies meets a node without the message,
     it gives floor(C/2) copies to the other and keeps ceil(C/2).
@@ -87,7 +87,7 @@ class SprayWaitAlgorithm:
     """
 
     name = "spray_wait"
-    L = 8  # initial copy budget
+    L = 3  # initial copy budget
 
     def exchange(self, a: DroneNode, b: DroneNode, _t: int, metrics: dict):
         self._spray(a, b, metrics)
@@ -190,22 +190,20 @@ class BasicReplication(EpidemicAlgorithm):
 
 class GossipAlgorithm:
     """
-    Probabilistic epidemic replication.
-    Each packet is forwarded with probability `fwd_prob` (default 0.70).
+    Gossip with fanout K=3: forward up to K randomly selected packets per
+    direction per encounter, reducing overhead vs pure flooding.
     """
 
     name = "gossip"
-
-    def __init__(self, fwd_prob: float = 0.70):
-        self.fwd_prob = fwd_prob
+    K = 3  # max packets forwarded per direction per encounter
 
     def exchange(self, a: DroneNode, b: DroneNode, _t: int, metrics: dict):
-        for did in list(set(b.data_items) - set(a.data_items)):
-            if random.random() < self.fwd_prob:
-                _transfer(b, a, did, metrics)
-        for did in list(set(a.data_items) - set(b.data_items)):
-            if random.random() < self.fwd_prob:
-                _transfer(a, b, did, metrics)
+        b_new = list(set(b.data_items) - set(a.data_items))
+        a_new = list(set(a.data_items) - set(b.data_items))
+        for did in random.sample(b_new, min(self.K, len(b_new))):
+            _transfer(b, a, did, metrics)
+        for did in random.sample(a_new, min(self.K, len(a_new))):
+            _transfer(a, b, did, metrics)
 
     def maybe_initiate_snapshot(self, drone: DroneNode, _t: int):
         pass

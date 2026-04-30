@@ -12,7 +12,7 @@ class DataPacket:
 
     _counter = 0
 
-    def __init__(self, source_id, timestamp, priority=None, size_mb=None, ttl=500):
+    def __init__(self, source_id, timestamp, priority=None, size_mb=None, ttl=800):
         DataPacket._counter += 1
         self.data_id = f"{source_id}-{DataPacket._counter}"
         self.source_id = source_id
@@ -114,7 +114,7 @@ class DroneNode:
             return
         if self.pause_ticks > 0:
             self.pause_ticks -= 1
-            self.battery = max(0.0, self.battery - 0.005)
+            self.battery = max(0.0, self.battery - 0.002)
             if self.battery <= 0:
                 self.alive = False
             return
@@ -130,7 +130,7 @@ class DroneNode:
         else:
             self.x += (dx / dist) * step
             self.y += (dy / dist) * step
-        self.battery = max(0.0, self.battery - 0.02)
+        self.battery = max(0.0, self.battery - 0.004)
         if self.battery <= 0:
             self.alive = False
 
@@ -139,7 +139,7 @@ class DroneNode:
 
     # ── Data collection ───────────────────────────────────────────────────
 
-    def collect_data(self, t: int, prob: float = 0.10) -> "DataPacket | None":
+    def collect_data(self, t: int, prob: float = 0.10, spray_l: int = 8) -> "DataPacket | None":
         if not self.alive or len(self.data_items) >= self.MAX_DATA:
             return None
         if random.random() > prob:
@@ -148,7 +148,7 @@ class DroneNode:
         packet = DataPacket(self.drone_id, t)
         self.data_items[packet.data_id] = packet
         self.ever_held_ids.add(packet.data_id)
-        self.spray_copies[packet.data_id] = 8   # AeroSnap/S&W initial budget L=8
+        self.spray_copies[packet.data_id] = spray_l
         self.vector_clock.tick()
         return packet
 

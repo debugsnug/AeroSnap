@@ -21,10 +21,10 @@ ALGO_COLORS = {
 ALGO_LABELS = {
     "aerosnap":   "AeroSnap",
     "epidemic":   "Epidemic",
-    "spray_wait": "Spray-Wait (L=8)",
+    "spray_wait": "Spray-Wait (L=3)",
     "emrt":       "EMRT (Dynamic L)",
     "prophet":    "PRoPHET",
-    "gossip":     "Gossip",
+    "gossip":     "Gossip (K=3)",
     "direct":     "Direct",
     "basic":      "Basic",
 }
@@ -385,7 +385,7 @@ def plot_emrt_vs_spray_wait(results: dict, save_dir: str = "plots"):
     em_errs  = [results["emrt"].get(f"{k}_std", 0)       for k, _, _ in metrics]
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.bar(x - width/2, sw_vals, width, yerr=sw_errs, label="Spray-Wait (L=3)",
+    ax.bar(x - width/2, sw_vals, width, yerr=sw_errs, label="Spray-Wait (L=3)",  # noqa
            color="#10B981", edgecolor="white", capsize=4, alpha=0.9)
     ax.bar(x + width/2, em_vals, width, yerr=em_errs, label="EMRT (Dynamic L)",
            color="#F97316", edgecolor="white", capsize=4, alpha=0.9)

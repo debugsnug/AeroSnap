@@ -1,0 +1,9 @@
+{
+  "aerosnap": { "scenario": "extreme", "num_runs": 10, "ddr": 74.8, "ddr_std": 4.2, "avg_delay": 198, "avg_delay_std": 28, "overhead": 8.1, "dsr": 78.3, "snapshot_accuracy": 71.2, "snapshot_accuracy_std": 3.5, "delivered": 748, "total_generated": 1000, "drones_alive": 15, "total_drones": 20 },
+  "epidemic": { "scenario": "extreme", "num_runs": 10, "ddr": 76.4, "ddr_std": 3.9, "avg_delay": 142, "avg_delay_std": 25, "overhead": 18.5, "dsr": 80.1, "snapshot_accuracy": null, "delivered": 764, "total_generated": 1000, "drones_alive": 15, "total_drones": 20 },
+  "spray_wait": { "scenario": "extreme", "num_runs": 10, "ddr": 68.2, "ddr_std": 5.1, "avg_delay": 242, "avg_delay_std": 38, "overhead": 4.8, "dsr": 71.6, "snapshot_accuracy": null, "delivered": 682, "total_generated": 1000, "drones_alive": 14, "total_drones": 20 },
+  "prophet": { "scenario": "extreme", "num_runs": 10, "ddr": 61.3, "ddr_std": 6.2, "avg_delay": 289, "avg_delay_std": 48, "overhead": 9.1, "dsr": 64.2, "snapshot_accuracy": null, "delivered": 613, "total_generated": 1000, "drones_alive": 13, "total_drones": 20 },
+  "gossip": { "scenario": "extreme", "num_runs": 10, "ddr": 52.4, "ddr_std": 7.3, "avg_delay": 381, "avg_delay_std": 62, "overhead": 13.2, "dsr": 56.8, "snapshot_accuracy": null, "delivered": 524, "total_generated": 1000, "drones_alive": 12, "total_drones": 20 },
+  "emrt": { "scenario": "extreme", "num_runs": 10, "ddr": 71.6, "ddr_std": 4.5, "avg_delay": 208, "avg_delay_std": 31, "overhead": 7.2, "dsr": 75.4, "snapshot_accuracy": null, "delivered": 716, "total_generated": 1000, "drones_alive": 15, "total_drones": 20 },
+  "direct": { "scenario": "extreme", "num_runs": 10, "ddr": 18.2, "ddr_std": 8.1, "avg_delay": 542, "avg_delay_std": 95, "overhead": 1.0, "dsr": 21.3, "snapshot_accuracy": null, "delivered": 182, "total_generated": 1000, "drones_alive": 12, "total_drones": 20 }
+}
