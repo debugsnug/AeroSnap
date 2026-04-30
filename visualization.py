@@ -21,7 +21,7 @@ ALGO_COLORS = {
 ALGO_LABELS = {
     "aerosnap":   "AeroSnap",
     "epidemic":   "Epidemic",
-    "spray_wait": "Spray-Wait (L=3)",
+    "spray_wait": "Spray-Wait (L=8)",
     "emrt":       "EMRT (Dynamic L)",
     "prophet":    "PRoPHET",
     "gossip":     "Gossip",

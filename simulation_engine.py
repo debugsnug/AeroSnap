@@ -95,6 +95,8 @@ class SimulationEngine:
         self.metrics = {
             "messages_exchanged": 0,
             "markers_sent": 0,
+            "ttl_expired": 0,
+            "pruned_packets": 0,
         }
 
         # Delivery rate timeline: list of (tick, cumulative_ddr)
@@ -164,25 +166,55 @@ class SimulationEngine:
 
         alive = [d for d in self.drones if d.alive]
 
+        # 3b. TTL expiry — drop packets whose time-to-live has run out
+        for d in alive:
+            expired = []
+            for did, item in d.data_items.items():
+                if item.ttl is None:
+                    continue
+                item.ttl -= 1
+                if item.ttl <= 0:
+                    expired.append(did)
+            for did in expired:
+                d.data_items.pop(did, None)
+                d.spray_copies.pop(did, None)
+                self.metrics["ttl_expired"] += 1
+
         # 4. Deliver to base station — clear delivered items from carrier buffer
         for d in alive:
             dist = math.hypot(d.x - self.base_x, d.y - self.base_y)
-            if dist <= self.base_range:
-                to_remove = []
-                for did, item in list(d.data_items.items()):
-                    if did not in self._delivered_ids:
-                        if random.random() > self.packet_loss:
-                            item.delivered = True
-                            item.delivery_time = t
-                            self.delivered_data.append(item)
-                            self._delivered_ids.add(did)
-                            # Log delivery into snapshot so accuracy isn't lost
-                            if d.local_snapshot is not None:
-                                d.local_snapshot["data_ids"].add(did)
-                    to_remove.append(did)
-                for did in to_remove:
-                    d.data_items.pop(did, None)
-                    d.spray_copies.pop(did, None)
+            at_base = dist <= self.base_range
+            if not at_base:
+                continue
+
+            # PRoPHET: drone near base gains P(BASE) experience
+            if self.strategy == "prophet":
+                P_INIT = 0.75
+                old = d.delivery_pred.get('BASE', 0.0)
+                d.delivery_pred['BASE'] = old + (1 - old) * P_INIT
+                d.last_encounter['BASE'] = t
+
+            newly_delivered = []
+            stale = []
+            for did, item in list(d.data_items.items()):
+                if did in self._delivered_ids:
+                    stale.append(did)
+                elif random.random() > self.packet_loss:
+                    item.delivered = True
+                    item.delivery_time = t
+                    self.delivered_data.append(item)
+                    self._delivered_ids.add(did)
+                    if d.local_snapshot is not None:
+                        d.local_snapshot["data_ids"].add(did)
+                    newly_delivered.append(did)
+                else:
+                    stale.append(did)   # lost due to packet_loss
+
+            for did in newly_delivered:
+                d.mark_delivered(did)   # records in delivered_ids, removes from buffer
+            for did in stale:
+                d.data_items.pop(did, None)
+                d.spray_copies.pop(did, None)
 
         # 5. AeroSnap: adaptive snapshot triggering
         if self.strategy == "aerosnap":

@@ -42,56 +42,82 @@ class AeroSnapAlgorithm:
     # ── Marker exchange ───────────────────────────────────────────────────
 
     def _exchange_markers(self, a: DroneNode, b: DroneNode, t: int, metrics: dict):
+        merged = False
         if a.local_snapshot and b.drone_id not in a.marker_sent_to:
             b.merge_snapshot(a.local_snapshot, t)
             a.marker_sent_to.add(b.drone_id)
             metrics["markers_sent"] = metrics.get("markers_sent", 0) + 1
+            merged = True
 
         if b.local_snapshot and a.drone_id not in b.marker_sent_to:
             a.merge_snapshot(b.local_snapshot, t)
             b.marker_sent_to.add(a.drone_id)
             metrics["markers_sent"] = metrics.get("markers_sent", 0) + 1
+            merged = True
+
+        # After snapshot merge, prune packets confirmed delivered by swarm
+        if merged:
+            for drone in (a, b):
+                if not drone.delivered_ids:
+                    continue
+                stale = [did for did in drone.data_items if did in drone.delivered_ids]
+                for did in stale:
+                    drone.data_items.pop(did, None)
+                    drone.spray_copies.pop(did, None)
+                    metrics["pruned_packets"] = metrics.get("pruned_packets", 0) + 1
 
     # ── Priority-gated replication ────────────────────────────────────────
 
     def _replicate_data(self, a: DroneNode, b: DroneNode, metrics: dict):
-        # Exclude items the destination has *ever* held (prevents re-receive cycle)
-        a_missing = set(b.data_items) - set(a.data_items) - a.ever_held_ids
-        b_missing = set(a.data_items) - set(b.data_items) - b.ever_held_ids
+        # Exclude items already held, already delivered, or destination's snapshot shows it has them
+        known_delivered = a.delivered_ids | b.delivered_ids
+        b_has = set(b.data_items) | (b.local_snapshot["data_ids"] if b.local_snapshot else set())
+        a_has = set(a.data_items) | (a.local_snapshot["data_ids"] if a.local_snapshot else set())
+
+        a_missing = set(b.data_items) - a_has - a.ever_held_ids - known_delivered
+        b_missing = set(a.data_items) - b_has - b.ever_held_ids - known_delivered
 
         for did in sorted(a_missing,
                           key=lambda x: b.data_items[x].priority, reverse=True):
             if len(a.data_items) >= a.MAX_DATA:
                 break
             item = b.data_items[did]
+            if item.priority < PRIORITY_THRESHOLD:
+                continue
             copies_left = b.spray_copies.get(did, 1)
-            if item.priority >= PRIORITY_THRESHOLD and copies_left > 1:
-                give = copies_left // 2
-                keep = copies_left - give
-                b.spray_copies[did] = keep
-                copy = item.copy()
-                copy.hops += 1
-                a.data_items[did] = copy
-                a.ever_held_ids.add(did)
-                a.spray_copies[did] = give
-                metrics["messages_exchanged"] = metrics.get("messages_exchanged", 0) + 1
+            if copies_left <= 1:
+                continue
+            give = copies_left // 2
+            b.spray_copies[did] = copies_left - give
+            copy = item.copy()
+            copy.hops += 1
+            a.data_items[did] = copy
+            a.ever_held_ids.add(did)
+            a.spray_copies[did] = give
+            a.battery = max(0.0, a.battery - 0.001)
+            b.battery = max(0.0, b.battery - 0.001)
+            metrics["messages_exchanged"] = metrics.get("messages_exchanged", 0) + 1
 
         for did in sorted(b_missing,
                           key=lambda x: a.data_items[x].priority, reverse=True):
             if len(b.data_items) >= b.MAX_DATA:
                 break
             item = a.data_items[did]
+            if item.priority < PRIORITY_THRESHOLD:
+                continue
             copies_left = a.spray_copies.get(did, 1)
-            if item.priority >= PRIORITY_THRESHOLD and copies_left > 1:
-                give = copies_left // 2
-                keep = copies_left - give
-                a.spray_copies[did] = keep
-                copy = item.copy()
-                copy.hops += 1
-                b.data_items[did] = copy
-                b.ever_held_ids.add(did)
-                b.spray_copies[did] = give
-                metrics["messages_exchanged"] = metrics.get("messages_exchanged", 0) + 1
+            if copies_left <= 1:
+                continue
+            give = copies_left // 2
+            a.spray_copies[did] = copies_left - give
+            copy = item.copy()
+            copy.hops += 1
+            b.data_items[did] = copy
+            b.ever_held_ids.add(did)
+            b.spray_copies[did] = give
+            a.battery = max(0.0, a.battery - 0.001)
+            b.battery = max(0.0, b.battery - 0.001)
+            metrics["messages_exchanged"] = metrics.get("messages_exchanged", 0) + 1
 
     # ── Adaptive snapshot triggering (called by engine each tick) ─────────
 

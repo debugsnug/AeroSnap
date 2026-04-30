@@ -22,6 +22,9 @@ from drone_node import DroneNode
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+TX_BATTERY_COST = 0.001   # battery drained per single data-item transfer
+
+
 def _transfer(src: DroneNode, dst: DroneNode, did: str, metrics: dict) -> bool:
     """
     Copy a single data packet from src to dst.
@@ -29,30 +32,28 @@ def _transfer(src: DroneNode, dst: DroneNode, did: str, metrics: dict) -> bool:
     Guards:
     * Skip if dst already held this item (prevents the re-receive cycle
       where items are delivered, cleared, then re-accepted from neighbours).
-    * If dst buffer is full, evict the lowest-priority undelivered item only
-      if the incoming item has strictly higher priority (priority-based eviction).
+    * Skip if the packet is confirmed delivered (delivery awareness).
     Returns True if the transfer succeeded.
     """
     # ── Prevent re-receive of already-held / already-delivered items ──
     if did in dst.ever_held_ids:
         return False
+    # ── Skip packets confirmed delivered via delivery awareness ──────
+    if did in src.delivered_ids or did in dst.delivered_ids:
+        return False
 
     incoming = src.data_items[did]
     if len(dst.data_items) >= dst.MAX_DATA:
-        # Try priority eviction
-        evict_id, evict_item = min(
-            dst.data_items.items(), key=lambda kv: kv[1].priority
-        )
-        if incoming.priority <= evict_item.priority:
-            return False   # not worth evicting
-        dst.data_items.pop(evict_id)
-        dst.spray_copies.pop(evict_id, None)
+        return False
 
     item = incoming.copy()
     item.hops += 1
     dst.data_items[did] = item
     dst.ever_held_ids.add(did)
     dst.spray_copies[did] = src.spray_copies.get(did, 1)
+    # TX battery cost on both sides
+    src.battery = max(0.0, src.battery - TX_BATTERY_COST)
+    dst.battery = max(0.0, dst.battery - TX_BATTERY_COST)
     metrics["messages_exchanged"] = metrics.get("messages_exchanged", 0) + 1
     return True
 
@@ -115,6 +116,9 @@ class PRoPHETAlgorithm:
     """
     Probabilistic Routing Protocol using History of Encounters and Transitivity.
 
+    Packets are routed toward drones with higher P(BASE) — the probability
+    of reaching the base station — not toward the packet's source drone.
+
     Parameters
     ----------
     p_init  : encounter update weight (default 0.75)
@@ -146,9 +150,13 @@ class PRoPHETAlgorithm:
         old = a.delivery_pred.get(b.drone_id, 0.0)
         a.delivery_pred[b.drone_id] = old + (1 - old) * self.p_init
         a.last_encounter[b.drone_id] = t
-        # Transitivity: update predictions for nodes b knows
+        # Transitivity toward BASE through b
+        via_base = a.delivery_pred[b.drone_id] * b.delivery_pred.get('BASE', 0.0) * self.beta
+        if via_base > a.delivery_pred.get('BASE', 0.0):
+            a.delivery_pred['BASE'] = via_base
+        # Transitivity toward other drone destinations
         for nid, b_pred in b.delivery_pred.items():
-            if nid == a.drone_id:
+            if nid == a.drone_id or nid == 'BASE':
                 continue
             a_pred = a.delivery_pred.get(nid, 0.0)
             a.delivery_pred[nid] = max(
@@ -157,15 +165,15 @@ class PRoPHETAlgorithm:
             )
 
     def _forward_messages(self, src: DroneNode, relay: DroneNode, metrics: dict):
-        """Forward from src to relay if relay has higher predictability for destination."""
-        for did, item in list(src.data_items.items()):
+        """Forward from src to relay if relay has higher P(BASE)."""
+        src_p_base   = src.delivery_pred.get('BASE', 0.0)
+        relay_p_base = relay.delivery_pred.get('BASE', 0.0)
+        if relay_p_base <= src_p_base:
+            return   # relay is no better than src at reaching base
+        for did in list(src.data_items):
             if did in relay.data_items:
                 continue
-            dest = item.source_id
-            src_pred = src.delivery_pred.get(dest, 0.0)
-            relay_pred = relay.delivery_pred.get(dest, 0.0)
-            if relay_pred > src_pred:
-                _transfer(src, relay, did, metrics)
+            _transfer(src, relay, did, metrics)
 
     def maybe_initiate_snapshot(self, drone: DroneNode, _t: int):
         pass
@@ -210,29 +218,30 @@ class EMRTAlgorithm:
     Enhanced Message Replication Technique (Hasan et al., 2023).
 
     Spray-and-Wait variant where the copy budget L is computed dynamically
-    per encounter based on four node-condition factors:
+    per-packet based on five node/packet-condition factors:
 
         Factor 1 — Connectivity  : fewer neighbours  → more copies needed
         Factor 2 — Energy        : higher battery    → can afford more copies
         Factor 3 — Buffer usage  : more free buffer  → can store more copies
         Factor 4 — Encounter rate: denser encounters → fewer copies needed
+        Factor 5 — TTL urgency   : low remaining TTL → replicate aggressively
 
-    L_dynamic = clamp(L_base + Δconn + Δenergy + Δbuffer + Δhistory, 1, L_max)
+    L_dynamic = clamp(L_base + Δconn + Δenergy + Δbuffer + Δhistory + ΔTTL, 1, L_max)
 
     All L values used are recorded in self.l_history for later analysis.
     """
 
     name = "emrt"
-    L_BASE = 3
+    L_BASE = 8    # same initial budget as Spray-and-Wait and AeroSnap
     L_MIN  = 1
     L_MAX  = 10
 
     def __init__(self):
         self.l_history: list = []   # every L value that was applied
 
-    # ── Dynamic L calculation ─────────────────────────────────────────────
+    # ── Dynamic L calculation (per-packet) ────────────────────────────────
 
-    def calculate_dynamic_l(self, drone: DroneNode, t: int) -> int:
+    def calculate_dynamic_l(self, drone: DroneNode, t: int, item=None) -> int:
         delta = 0
 
         # Factor 1: Connectivity
@@ -265,6 +274,14 @@ class EMRTAlgorithm:
         elif enc_rate < 0.1:
             delta += 1    # rare meetings — extra copies improve coverage
 
+        # Factor 5: TTL urgency — replicate aggressively as deadline approaches
+        if item is not None and item.ttl is not None:
+            ttl_ratio = item.ttl / 500.0
+            if ttl_ratio < 0.2:
+                delta += 3    # very urgent — nearly expired
+            elif ttl_ratio < 0.5:
+                delta += 1    # getting close
+
         return max(self.L_MIN, min(self.L_MAX, self.L_BASE + delta))
 
     # ── Exchange ──────────────────────────────────────────────────────────
@@ -277,14 +294,13 @@ class EMRTAlgorithm:
         self._spray(b, a, t, metrics)
 
     def _spray(self, src: DroneNode, dst: DroneNode, t: int, metrics: dict):
-        l_dynamic = self.calculate_dynamic_l(src, t)
         for did, item in list(src.data_items.items()):
             if did in dst.data_items:
                 continue
             copies = src.spray_copies.get(did, 1)
             if copies <= 1:
                 continue   # wait phase
-            # Give min(give, l_dynamic // 2) copies so we respect dynamic budget
+            l_dynamic = self.calculate_dynamic_l(src, t, item)
             give = min(copies // 2, max(1, l_dynamic // 2))
             keep = copies - give
             src.spray_copies[did] = keep

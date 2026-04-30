@@ -204,7 +204,7 @@ def _save_csv_summary(all_results: dict, output_dir: str):
             for key in ("ddr", "dsr", "avg_delay", "p95_delay",
                         "snapshot_accuracy", "overhead",
                         "avg_energy", "avg_hops", "drones_alive",
-                        "messages_exchanged"):
+                        "messages_exchanged", "ttl_expired", "pruned_packets"):
                 row[key] = m.get(key, "")
                 row[f"{key}_std"] = m.get(f"{key}_std", "")
             rows.append(row)

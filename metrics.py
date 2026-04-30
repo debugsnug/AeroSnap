@@ -88,6 +88,8 @@ def compute_metrics(sim) -> dict:
         "snapshot_accuracy": round(snapshot_accuracy, 2),
         "messages_exchanged": sim.metrics.get("messages_exchanged", 0),
         "markers_sent": sim.metrics.get("markers_sent", 0),
+        "ttl_expired": sim.metrics.get("ttl_expired", 0),
+        "pruned_packets": sim.metrics.get("pruned_packets", 0),
         "overhead": round(overhead, 3),
         "avg_energy": round(avg_energy, 2),
         "avg_hops": round(avg_hops, 2),
@@ -160,6 +162,8 @@ def print_metrics_table(metrics_by_strategy: dict):
         ("Overhead (msg/pkt)", "overhead"),
         ("Avg Energy (%)", "avg_energy"),
         ("Avg Hops", "avg_hops"),
+        ("TTL Expired", "ttl_expired"),
+        ("Pruned (AeroSnap)", "pruned_packets"),
         ("Drones Alive", "drones_alive"),
         ("Messages Exchanged", "messages_exchanged"),
     ]

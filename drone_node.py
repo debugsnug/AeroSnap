@@ -12,13 +12,14 @@ class DataPacket:
 
     _counter = 0
 
-    def __init__(self, source_id, timestamp, priority=None, size_mb=None):
+    def __init__(self, source_id, timestamp, priority=None, size_mb=None, ttl=500):
         DataPacket._counter += 1
         self.data_id = f"{source_id}-{DataPacket._counter}"
         self.source_id = source_id
         self.generation_time = timestamp
         self.priority = priority if priority is not None else round(random.uniform(0.3, 1.0), 2)
         self.size_mb = size_mb if size_mb is not None else round(random.uniform(1.0, 5.0), 2)
+        self.ttl = ttl          # time-to-live in ticks; None = immortal
         self.hops = 0
         self.delivered = False
         self.delivery_time = None
@@ -30,6 +31,7 @@ class DataPacket:
         p.generation_time = self.generation_time
         p.priority = self.priority
         p.size_mb = self.size_mb
+        p.ttl = self.ttl
         p.hops = self.hops
         p.delivered = self.delivered
         p.delivery_time = self.delivery_time
@@ -41,6 +43,7 @@ class DataPacket:
             "source": self.source_id,
             "gen_time": self.generation_time,
             "priority": self.priority,
+            "ttl": self.ttl,
             "hops": self.hops,
             "delivered": self.delivered,
             "delivery_time": self.delivery_time,
@@ -72,9 +75,11 @@ class DroneNode:
         # Spray-and-Wait: remaining copy budget per data_id
         self.spray_copies: dict = {}
 
-        # PRoPHET: delivery predictability per destination drone_id
+        # PRoPHET: delivery predictability per destination (drone_id or 'BASE')
         self.delivery_pred: dict = {nid: 0.0 for nid in all_drone_ids}
+        self.delivery_pred['BASE'] = 0.0          # routing destination for all packets
         self.last_encounter: dict = {nid: 0 for nid in all_drone_ids}
+        self.last_encounter['BASE'] = 0
 
         # Vector clock (AeroSnap)
         self.vector_clock = VectorClock(drone_id, all_drone_ids)
@@ -98,6 +103,9 @@ class DroneNode:
         self.snapshots_merged = 0
         self.total_encounters = 0       # cumulative neighbour contacts (for EMRT)
         self.ever_held_ids: set = set() # all data IDs this drone has ever buffered
+
+        # Delivery awareness — propagated via snapshot merges (AeroSnap)
+        self.delivered_ids: set = set()
 
     # ── Mobility ──────────────────────────────────────────────────────────
 
@@ -157,12 +165,12 @@ class DroneNode:
 
     def initiate_snapshot(self, t: int):
         self.vector_clock.tick()
-        # Include current buffer + full history (items delivered before this snapshot)
         self.local_snapshot = {
             "drone_id": self.drone_id,
             "snapshot_time": t,
             "vector_clock": self.vector_clock.to_dict(),
             "data_ids": set(self.data_items.keys()) | self.ever_held_ids,
+            "delivered_ids": set(self.delivered_ids),
             "known_nodes": {self.drone_id},
             "partition_id": self.partition_id,
             "merged_count": 0,
@@ -170,6 +178,12 @@ class DroneNode:
         self.marker_sent_to = set()
         self.last_snapshot_time = t
         self.snapshots_initiated += 1
+
+    def mark_delivered(self, data_id: str):
+        """Record that a packet reached base; remove it from local buffer."""
+        self.delivered_ids.add(data_id)
+        self.data_items.pop(data_id, None)
+        self.spray_copies.pop(data_id, None)
 
     def merge_snapshot(self, other_snap: dict, t: int):
         """Merge an incoming snapshot using element-wise-max vector clocks."""
@@ -180,6 +194,11 @@ class DroneNode:
         for nid, ts in o["vector_clock"].items():
             s["vector_clock"][nid] = max(s["vector_clock"].get(nid, 0), ts)
         s["data_ids"] |= o["data_ids"]
+        # Propagate delivered_ids and update live awareness
+        incoming_delivered = o.get("delivered_ids", set())
+        s.setdefault("delivered_ids", set())
+        s["delivered_ids"] |= incoming_delivered
+        self.delivered_ids |= incoming_delivered   # live awareness for routing
         s["known_nodes"] |= o["known_nodes"]
         old_part = self.partition_id
         self.partition_id = max(self.partition_id, o["partition_id"])
